@@ -15,13 +15,41 @@ async function loadNotes() {
   }
 }
 
+// Tracks the active filter: 'all' | 'true' | 'false'
+let currentFilter = 'all';
+
+function updateBulkButton() {
+  const checked = document.querySelectorAll('.action-checkbox:checked');
+  document.getElementById('bulk-complete-btn').disabled = checked.length === 0;
+}
+
 async function loadActions() {
   const list = document.getElementById('actions');
   list.innerHTML = '';
-  const items = await fetchJSON('/action-items/');
+
+  let url = '/action-items/';
+  if (currentFilter === 'true') url += '?completed=true';
+  else if (currentFilter === 'false') url += '?completed=false';
+
+  const items = await fetchJSON(url);
   for (const a of items) {
     const li = document.createElement('li');
-    li.textContent = `${a.description} [${a.completed ? 'done' : 'open'}]`;
+    li.className = 'action-item' + (a.completed ? ' completed' : '');
+
+    // Checkbox (only for incomplete items — completed ones can't be re-selected)
+    if (!a.completed) {
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'action-checkbox';
+      checkbox.dataset.id = a.id;
+      checkbox.addEventListener('change', updateBulkButton);
+      li.appendChild(checkbox);
+    }
+
+    const span = document.createElement('span');
+    span.textContent = `${a.description} [${a.completed ? 'done' : 'open'}]`;
+    li.appendChild(span);
+
     if (!a.completed) {
       const btn = document.createElement('button');
       btn.textContent = 'Complete';
@@ -31,8 +59,11 @@ async function loadActions() {
       };
       li.appendChild(btn);
     }
+
     list.appendChild(li);
   }
+
+  updateBulkButton();
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -58,6 +89,29 @@ window.addEventListener('DOMContentLoaded', () => {
       body: JSON.stringify({ description }),
     });
     e.target.reset();
+    loadActions();
+  });
+
+  // Filter toggle buttons
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentFilter = btn.dataset.filter;
+      loadActions();
+    });
+  });
+
+  // Bulk complete
+  document.getElementById('bulk-complete-btn').addEventListener('click', async () => {
+    const checked = document.querySelectorAll('.action-checkbox:checked');
+    const ids = Array.from(checked).map(cb => parseInt(cb.dataset.id, 10));
+    if (ids.length === 0) return;
+    await fetchJSON('/action-items/bulk-complete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    });
     loadActions();
   });
 

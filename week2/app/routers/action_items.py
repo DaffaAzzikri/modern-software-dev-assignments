@@ -1,50 +1,76 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Query
 
-from .. import db
-from ..services.extract import extract_action_items
+from ..db import get_action_item_repository, get_note_repository
+from ..schemas import (
+    ActionItemResponse,
+    ExtractRequest,
+    ExtractResponse,
+    ExtractedItem,
+    MarkDoneRequest,
+    MarkDoneResponse,
+)
+from ..services.extract import extract_action_items, extract_action_items_llm
 
 
 router = APIRouter(prefix="/action-items", tags=["action-items"])
 
 
-@router.post("/extract")
-def extract(payload: Dict[str, Any]) -> Dict[str, Any]:
-    text = str(payload.get("text", "")).strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text is required")
-
+@router.post("/extract", response_model=ExtractResponse)
+def extract(request: ExtractRequest) -> ExtractResponse:
+    """Extract action items from text, optionally saving as a note."""
     note_id: Optional[int] = None
-    if payload.get("save_note"):
-        note_id = db.insert_note(text)
+    if request.save_note:
+        note_id = get_note_repository().insert(request.text)
 
-    items = extract_action_items(text)
-    ids = db.insert_action_items(items, note_id=note_id)
-    return {"note_id": note_id, "items": [{"id": i, "text": t} for i, t in zip(ids, items)]}
+    items = extract_action_items(request.text)
+    ids = get_action_item_repository().insert_many(items, note_id=note_id)
+    return ExtractResponse(
+        note_id=note_id,
+        items=[ExtractedItem(id=i, text=t) for i, t in zip(ids, items)],
+    )
 
 
-@router.get("")
-def list_all(note_id: Optional[int] = None) -> List[Dict[str, Any]]:
-    rows = db.list_action_items(note_id=note_id)
+@router.post("/extract-llm", response_model=ExtractResponse)
+def extract_llm(request: ExtractRequest) -> ExtractResponse:
+    """Extract action items from text using LLM, optionally saving as a note."""
+    note_id: Optional[int] = None
+    if request.save_note:
+        note_id = get_note_repository().insert(request.text)
+
+    items = extract_action_items_llm(request.text)
+    ids = get_action_item_repository().insert_many(items, note_id=note_id)
+    return ExtractResponse(
+        note_id=note_id,
+        items=[ExtractedItem(id=i, text=t) for i, t in zip(ids, items)],
+    )
+
+
+@router.get("", response_model=list[ActionItemResponse])
+def list_all(
+    note_id: Optional[int] = Query(default=None, description="Filter by note id"),
+) -> list[ActionItemResponse]:
+    """List all action items, optionally filtered by note_id."""
+    items = get_action_item_repository().list_all(note_id=note_id)
     return [
-        {
-            "id": r["id"],
-            "note_id": r["note_id"],
-            "text": r["text"],
-            "done": bool(r["done"]),
-            "created_at": r["created_at"],
-        }
-        for r in rows
+        ActionItemResponse(
+            id=item.id,
+            note_id=item.note_id,
+            text=item.text,
+            done=item.done,
+            created_at=item.created_at,
+        )
+        for item in items
     ]
 
 
-@router.post("/{action_item_id}/done")
-def mark_done(action_item_id: int, payload: Dict[str, Any]) -> Dict[str, Any]:
-    done = bool(payload.get("done", True))
-    db.mark_action_item_done(action_item_id, done)
-    return {"id": action_item_id, "done": done}
+@router.post("/{action_item_id}/done", response_model=MarkDoneResponse)
+def mark_done(action_item_id: int, request: MarkDoneRequest) -> MarkDoneResponse:
+    """Mark an action item as done or undone."""
+    get_action_item_repository().mark_done(action_item_id, request.done)
+    return MarkDoneResponse(id=action_item_id, done=request.done)
 
 

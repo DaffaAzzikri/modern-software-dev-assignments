@@ -32,6 +32,8 @@ class ActionItemRead(BaseModel):
     id: int
     description: str
     completed: bool
+    assignee: str | None = None
+    priority: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -42,3 +44,5 @@ class ActionItemRead(BaseModel):
 class ActionItemPatch(BaseModel):
     description: str | None = None
     completed: bool | None = None
+    assignee: str | None = None
+    priority: str | None = None

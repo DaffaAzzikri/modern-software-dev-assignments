@@ -1,3 +1,4 @@
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,6 +10,22 @@ from ..models import ActionItem
 from ..schemas import ActionItemCreate, ActionItemPatch, ActionItemRead
 
 router = APIRouter(prefix="/action-items", tags=["action_items"])
+
+
+def extract_assignee(description: str) -> tuple[Optional[str], str]:
+    """Extract assignee from description (e.g., @john) and return (assignee, cleaned_description)."""
+    match = re.search(r'@(\w+)', description)
+    assignee = match.group(1) if match else None
+    cleaned = re.sub(r'@\w+', '', description) if match else description
+    return assignee, cleaned.strip()
+
+
+def extract_priority(description: str) -> tuple[Optional[str], str]:
+    """Extract priority from description (e.g., [HIGH]) and return (priority, cleaned_description)."""
+    match = re.search(r'\[([A-Za-z]+)\]', description)
+    priority = match.group(1).upper() if match else None
+    cleaned = re.sub(r'\[[A-Za-z]+\]', '', description) if match else description
+    return priority, cleaned.strip()
 
 
 @router.get("/", response_model=list[ActionItemRead])
@@ -36,9 +53,19 @@ def list_items(
 
 @router.post("/", response_model=ActionItemRead, status_code=201)
 def create_item(payload: ActionItemCreate, db: Session = Depends(get_db)) -> ActionItemRead:
-    item = ActionItem(description=payload.description, completed=False)
+    # Extract assignee and priority from description
+    assignee, description_after_assignee = extract_assignee(payload.description)
+    priority, cleaned_description = extract_priority(description_after_assignee)
+    
+    # Create ActionItem with extracted values
+    item = ActionItem(
+        description=cleaned_description,
+        completed=False,
+        assignee=assignee,
+        priority=priority
+    )
     db.add(item)
-    db.flush()
+    db.commit()
     db.refresh(item)
     return ActionItemRead.model_validate(item)
 
@@ -50,7 +77,7 @@ def complete_item(item_id: int, db: Session = Depends(get_db)) -> ActionItemRead
         raise HTTPException(status_code=404, detail="Action item not found")
     item.completed = True
     db.add(item)
-    db.flush()
+    db.commit()
     db.refresh(item)
     return ActionItemRead.model_validate(item)
 
@@ -61,12 +88,19 @@ def patch_item(item_id: int, payload: ActionItemPatch, db: Session = Depends(get
     if not item:
         raise HTTPException(status_code=404, detail="Action item not found")
     if payload.description is not None:
-        item.description = payload.description
+        # Re-extract if description is patched
+        assignee, description_after_assignee = extract_assignee(payload.description)
+        priority, cleaned_description = extract_priority(description_after_assignee)
+        item.description = cleaned_description
+        item.assignee = assignee
+        item.priority = priority
     if payload.completed is not None:
         item.completed = payload.completed
+    if payload.assignee is not None:
+        item.assignee = payload.assignee
+    if payload.priority is not None:
+        item.priority = payload.priority
     db.add(item)
-    db.flush()
+    db.commit()
     db.refresh(item)
     return ActionItemRead.model_validate(item)
-
-
